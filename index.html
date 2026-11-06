@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>暗号ジェネレーター</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --card: #ffffff;
+    --text: #1d2130;
+    --muted: #6b7280;
+    --border: #d9dce5;
+    --accent: #4f46e5;
+    --accent-text: #ffffff;
+    --error: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141c;
+      --card: #1c1f2b;
+      --text: #e8eaf2;
+      --muted: #9aa0b4;
+      --border: #333849;
+      --accent: #818cf8;
+      --accent-text: #12141c;
+      --error: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  label:first-child { margin-top: 0; }
+  textarea, input, select {
+    width: 100%;
+    font: inherit;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  textarea { min-height: 120px; resize: vertical; }
+  textarea[readonly] { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px 18px;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:hover { filter: brightness(1.05); }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 6px 0 0; }
+  .status { min-height: 1.5em; margin-top: 12px; font-size: 0.9rem; color: var(--muted); }
+  .status.error { color: var(--error); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>暗号ジェネレーター</h1>
+  <p class="lead">文章を入力して暗号化・復号できます。処理はすべてブラウザ内で行われ、外部には送信されません。</p>
+
+  <div class="card">
+    <label for="mode">暗号方式</label>
+    <select id="mode">
+      <option value="aes">AES-256（パスワード方式・安全）</option>
+      <option value="caesar">シーザー暗号（文字をずらす・お遊び用）</option>
+    </select>
+
+    <div id="aes-opts">
+      <label for="password">パスワード</label>
+      <input id="password" type="password" autocomplete="off" placeholder="復号にも同じパスワードが必要です">
+    </div>
+
+    <div id="caesar-opts" class="hidden">
+      <label for="shift">ずらす数</label>
+      <input id="shift" type="number" value="3">
+      <p class="hint">英字・数字・ひらがな・カタカナをずらします。復号は同じ数で戻します。</p>
+    </div>
+
+    <label for="input">入力</label>
+    <textarea id="input" placeholder="例：こんにちは"></textarea>
+
+    <div class="row">
+      <button class="primary" id="encrypt">暗号化する</button>
+      <button id="decrypt">復号する</button>
+    </div>
+
+    <label for="output">結果</label>
+    <textarea id="output" readonly></textarea>
+
+    <div class="row">
+      <button id="copy">結果をコピー</button>
+      <button id="swap">結果を入力に移す</button>
+    </div>
+    <div class="status" id="status" role="status"></div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+function setStatus(msg, isError = false) {
+  $("status").textContent = msg;
+  $("status").classList.toggle("error", isError);
+}
+
+// ---- AES-GCM（PBKDF2でパスワードから鍵を生成） ----
+const ITERATIONS = 200000;
+
+async function deriveKey(password, salt) {
+  const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: ITERATIONS, hash: "SHA-256" },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+function toBase64(bytes) {
+  let s = "";
+  bytes.forEach((b) => (s += String.fromCharCode(b)));
+  return btoa(s);
+}
+
+function fromBase64(str) {
+  const s = atob(str.trim());
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+
+async function aesEncrypt(text, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(text)));
+  const out = new Uint8Array(salt.length + iv.length + cipher.length);
+  out.set(salt, 0);
+  out.set(iv, 16);
+  out.set(cipher, 28);
+  return toBase64(out);
+}
+
+async function aesDecrypt(b64, password) {
+  const data = fromBase64(b64);
+  const key = await deriveKey(password, data.slice(0, 16));
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.slice(16, 28) }, key, data.slice(28));
+  return dec.decode(plain);
+}
+
+// ---- シーザー暗号 ----
+const RANGES = [
+  [0x41, 0x5a], // A-Z
+  [0x61, 0x7a], // a-z
+  [0x30, 0x39], // 0-9
+  [0x3041, 0x3096], // ひらがな
+  [0x30a1, 0x30fa], // カタカナ
+];
+
+function caesar(text, shift) {
+  return Array.from(text, (ch) => {
+    const code = ch.codePointAt(0);
+    for (const [start, end] of RANGES) {
+      if (code >= start && code <= end) {
+        const size = end - start + 1;
+        return String.fromCodePoint(start + ((((code - start + shift) % size) + size) % size));
+      }
+    }
+    return ch;
+  }).join("");
+}
+
+// ---- UI ----
+$("mode").addEventListener("change", () => {
+  const isAes = $("mode").value === "aes";
+  $("aes-opts").classList.toggle("hidden", !isAes);
+  $("caesar-opts").classList.toggle("hidden", isAes);
+  setStatus("");
+});
+
+async function run(direction) {
+  const text = $("input").value;
+  if (!text) return setStatus("文章を入力してください。", true);
+
+  if ($("mode").value === "caesar") {
+    const shift = parseInt($("shift").value, 10) || 0;
+    $("output").value = caesar(text, direction === "encrypt" ? shift : -shift);
+    return setStatus(direction === "encrypt" ? "暗号化しました。" : "復号しました。");
+  }
+
+  const password = $("password").value;
+  if (!password) return setStatus("パスワードを入力してください。", true);
+  try {
+    if (direction === "encrypt") {
+      $("output").value = await aesEncrypt(text, password);
+      setStatus("暗号化しました。同じパスワードで復号できます。");
+    } else {
+      $("output").value = await aesDecrypt(text, password);
+      setStatus("復号しました。");
+    }
+  } catch {
+    $("output").value = "";
+    setStatus("復号に失敗しました。パスワードか暗号文が正しくありません。", true);
+  }
+}
+
+$("encrypt").addEventListener("click", () => run("encrypt"));
+$("decrypt").addEventListener("click", () => run("decrypt"));
+
+$("copy").addEventListener("click", async () => {
+  if (!$("output").value) return;
+  try {
+    await navigator.clipboard.writeText($("output").value);
+    setStatus("コピーしました。");
+  } catch {
+    $("output").select();
+    setStatus("自動コピーできませんでした。選択された結果を手動でコピーしてください。", true);
+  }
+});
+
+$("swap").addEventListener("click", () => {
+  $("input").value = $("output").value;
+  $("output").value = "";
+  setStatus("");
+});
+</script>
+</body>
+</html>
