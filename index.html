@@ -74,26 +74,29 @@
   .status { min-height: 1.5em; margin-top: 12px; font-size: 0.9rem; color: var(--muted); }
   .status.error { color: var(--error); }
   .hidden { display: none; }
+  .lang { text-align: right; font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; }
+  .lang a { color: var(--accent); }
 </style>
 </head>
 <body>
 <main>
+  <nav class="lang"><span>日本語</span> | <a href="en.html" hreflang="en">English</a></nav>
   <h1>あんごうマシーン <small>-Coded Message Generator-</small></h1>
-  <p class="lead">文章を入力して暗号化・復号できます。処理はすべてブラウザ内で行われ、外部には送信されません。</p>
+  <p class="lead">文章を入力して暗号化・復号できます。処理はすべてブラウザ内で行われ、入力した文章やパスワードは外部に送信されません。</p>
 
   <div class="card">
     <label for="mode">暗号方式</label>
     <select id="mode">
       <option value="aes">AES-256（パスワード方式・安全）</option>
-      <option value="caesar">シーザー暗号（文字をずらす・お遊び用）</option>
+      <option value="caesar" selected>シーザー暗号（文字をずらす・お遊び用）</option>
     </select>
 
-    <div id="aes-opts">
+    <div id="aes-opts" class="hidden">
       <label for="password">パスワード</label>
       <input id="password" type="password" autocomplete="off" placeholder="復号にも同じパスワードが必要です">
     </div>
 
-    <div id="caesar-opts" class="hidden">
+    <div id="caesar-opts">
       <label for="shift">ずらす数</label>
       <input id="shift" type="number" value="3">
       <p class="hint">英字・数字・ひらがな・カタカナをずらします。復号は同じ数で戻します。</p>
@@ -117,6 +120,18 @@
     <div class="status" id="status" role="status"></div>
   </div>
 </main>
+
+<footer style="text-align:center; padding:18px 0 14px; margin-top:10px;">
+  <img id="accessCounter" alt="アクセスカウンター" style="height:20px; vertical-align:middle; opacity:0; transition:opacity 0.3s;">
+</footer>
+<script>
+  (function () {
+    const img = document.getElementById('accessCounter');
+    img.src = 'https://hits.dwyl.com/angou-generator-app/index.html.svg?style=flat-square';
+    img.onload  = () => { img.style.opacity = '1'; };
+    img.onerror = () => { img.style.display = 'none'; };
+  })();
+</script>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -202,6 +217,33 @@ $("mode").addEventListener("change", () => {
   setStatus("");
 });
 
+// X(Twitter)の文字数カウント（twitter-text v3 の重み付けに準拠）
+// 半角英数・記号・スペース・改行 = 1、日本語などの全角文字・絵文字 = 2、URL = 23。上限は280。
+const X_LIMIT = 280;
+const X_LIGHT_RANGES = [[0x0000, 0x10ff], [0x2000, 0x200d], [0x2010, 0x201f], [0x2032, 0x2037]];
+const URL_RE = /https?:\/\/[^\s]+/g;
+const EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+
+function xWeight(text) {
+  let s = text.normalize("NFC");
+  let total = 0;
+  s = s.replace(URL_RE, () => { total += 23; return ""; });
+  const seg = new Intl.Segmenter("ja", { granularity: "grapheme" });
+  for (const { segment } of seg.segment(s)) {
+    if (EMOJI_RE.test(segment)) { total += 2; continue; }
+    for (const ch of segment) {
+      const c = ch.codePointAt(0);
+      total += X_LIGHT_RANGES.some(([a, b]) => c >= a && c <= b) ? 1 : 2;
+    }
+  }
+  return total;
+}
+
+function countLabel(text) {
+  const n = xWeight(text) / 2; // 全角1文字 = 1、半角1文字 = 0.5
+  return `${X_LIMIT / 2}文字中${n}文字${n > X_LIMIT / 2 ? "・上限オーバー" : ""}`;
+}
+
 async function run(direction) {
   const text = $("input").value;
   if (!text) return setStatus("文章を入力してください。", true);
@@ -209,7 +251,7 @@ async function run(direction) {
   if ($("mode").value === "caesar") {
     const shift = parseInt($("shift").value, 10) || 0;
     $("output").value = caesar(text, direction === "encrypt" ? shift : -shift);
-    return setStatus(direction === "encrypt" ? "暗号化しました。" : "復号しました。");
+    return setStatus(direction === "encrypt" ? "暗号化しました。" : `復号しました。（${countLabel($("output").value)}）`);
   }
 
   const password = $("password").value;
@@ -220,7 +262,7 @@ async function run(direction) {
       setStatus("暗号化しました。同じパスワードで復号できます。");
     } else {
       $("output").value = await aesDecrypt(text, password);
-      setStatus("復号しました。");
+      setStatus(`復号しました。（${countLabel($("output").value)}）`);
     }
   } catch {
     $("output").value = "";

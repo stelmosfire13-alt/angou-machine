@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coded Message Generator</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --card: #ffffff;
+    --text: #1d2130;
+    --muted: #6b7280;
+    --border: #d9dce5;
+    --accent: #4f46e5;
+    --accent-text: #ffffff;
+    --error: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141c;
+      --card: #1c1f2b;
+      --text: #e8eaf2;
+      --muted: #9aa0b4;
+      --border: #333849;
+      --accent: #818cf8;
+      --accent-text: #12141c;
+      --error: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  label:first-child { margin-top: 0; }
+  textarea, input, select {
+    width: 100%;
+    font: inherit;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  textarea { min-height: 120px; resize: vertical; }
+  textarea[readonly] { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px 18px;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:hover { filter: brightness(1.05); }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 6px 0 0; }
+  .status { min-height: 1.5em; margin-top: 12px; font-size: 0.9rem; color: var(--muted); }
+  .status.error { color: var(--error); }
+  .hidden { display: none; }
+  .lang { text-align: right; font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; }
+  .lang a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <nav class="lang"><a href="index.html" hreflang="ja">日本語</a> | <span>English</span></nav>
+  <h1>Coded Message Generator</h1>
+  <p class="lead">Encrypt and decrypt your messages. Everything runs in your browser — your messages and passwords are never sent anywhere.</p>
+
+  <div class="card">
+    <label for="mode">Cipher</label>
+    <select id="mode">
+      <option value="aes">AES-256 (password-based, secure)</option>
+      <option value="caesar" selected>Caesar cipher (shifts letters, just for fun)</option>
+    </select>
+
+    <div id="aes-opts" class="hidden">
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="off" placeholder="You will need the same password to decrypt">
+    </div>
+
+    <div id="caesar-opts">
+      <label for="shift">Shift</label>
+      <input id="shift" type="number" value="3">
+      <p class="hint">Shifts letters, digits, and Japanese kana. Use the same number to decrypt.</p>
+    </div>
+
+    <label for="input">Input</label>
+    <textarea id="input" placeholder="e.g. Hello"></textarea>
+
+    <div class="row">
+      <button class="primary" id="encrypt">Encrypt</button>
+      <button id="decrypt">Decrypt</button>
+    </div>
+
+    <label for="output">Result</label>
+    <textarea id="output" readonly></textarea>
+
+    <div class="row">
+      <button id="copy">Copy result</button>
+      <button id="swap">Move result to input</button>
+    </div>
+    <div class="status" id="status" role="status"></div>
+  </div>
+</main>
+
+<footer style="text-align:center; padding:18px 0 14px; margin-top:10px;">
+  <img id="accessCounter" alt="Visitor counter" style="height:20px; vertical-align:middle; opacity:0; transition:opacity 0.3s;">
+</footer>
+<script>
+  (function () {
+    const img = document.getElementById('accessCounter');
+    img.src = 'https://hits.dwyl.com/angou-generator-app/en.html.svg?style=flat-square';
+    img.onload  = () => { img.style.opacity = '1'; };
+    img.onerror = () => { img.style.display = 'none'; };
+  })();
+</script>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+function setStatus(msg, isError = false) {
+  $("status").textContent = msg;
+  $("status").classList.toggle("error", isError);
+}
+
+// ---- AES-GCM (key derived from the password with PBKDF2) ----
+const ITERATIONS = 200000;
+
+async function deriveKey(password, salt) {
+  const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: ITERATIONS, hash: "SHA-256" },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+function toBase64(bytes) {
+  let s = "";
+  bytes.forEach((b) => (s += String.fromCharCode(b)));
+  return btoa(s);
+}
+
+function fromBase64(str) {
+  const s = atob(str.trim());
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+
+async function aesEncrypt(text, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(text)));
+  const out = new Uint8Array(salt.length + iv.length + cipher.length);
+  out.set(salt, 0);
+  out.set(iv, 16);
+  out.set(cipher, 28);
+  return toBase64(out);
+}
+
+async function aesDecrypt(b64, password) {
+  const data = fromBase64(b64);
+  const key = await deriveKey(password, data.slice(0, 16));
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.slice(16, 28) }, key, data.slice(28));
+  return dec.decode(plain);
+}
+
+// ---- Caesar cipher ----
+const RANGES = [
+  [0x41, 0x5a], // A-Z
+  [0x61, 0x7a], // a-z
+  [0x30, 0x39], // 0-9
+  [0x3041, 0x3096], // Hiragana
+  [0x30a1, 0x30fa], // Katakana
+];
+
+function caesar(text, shift) {
+  return Array.from(text, (ch) => {
+    const code = ch.codePointAt(0);
+    for (const [start, end] of RANGES) {
+      if (code >= start && code <= end) {
+        const size = end - start + 1;
+        return String.fromCodePoint(start + ((((code - start + shift) % size) + size) % size));
+      }
+    }
+    return ch;
+  }).join("");
+}
+
+// ---- UI ----
+$("mode").addEventListener("change", () => {
+  const isAes = $("mode").value === "aes";
+  $("aes-opts").classList.toggle("hidden", !isAes);
+  $("caesar-opts").classList.toggle("hidden", isAes);
+  setStatus("");
+});
+
+// X (Twitter) character count, following twitter-text v3 weighting
+// Latin letters, symbols, spaces, newlines = 1; CJK and other wide characters, emoji = 2; URLs = 23. Limit is 280.
+const X_LIMIT = 280;
+const X_LIGHT_RANGES = [[0x0000, 0x10ff], [0x2000, 0x200d], [0x2010, 0x201f], [0x2032, 0x2037]];
+const URL_RE = /https?:\/\/[^\s]+/g;
+const EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+
+function xWeight(text) {
+  let s = text.normalize("NFC");
+  let total = 0;
+  s = s.replace(URL_RE, () => { total += 23; return ""; });
+  const seg = new Intl.Segmenter("en", { granularity: "grapheme" });
+  for (const { segment } of seg.segment(s)) {
+    if (EMOJI_RE.test(segment)) { total += 2; continue; }
+    for (const ch of segment) {
+      const c = ch.codePointAt(0);
+      total += X_LIGHT_RANGES.some(([a, b]) => c >= a && c <= b) ? 1 : 2;
+    }
+  }
+  return total;
+}
+
+function countLabel(text) {
+  const n = xWeight(text);
+  return `${n} / ${X_LIMIT} characters on X${n > X_LIMIT ? " — over the limit" : ""}`;
+}
+
+async function run(direction) {
+  const text = $("input").value;
+  if (!text) return setStatus("Please enter a message.", true);
+
+  if ($("mode").value === "caesar") {
+    const shift = parseInt($("shift").value, 10) || 0;
+    $("output").value = caesar(text, direction === "encrypt" ? shift : -shift);
+    return setStatus(direction === "encrypt" ? "Encrypted." : `Decrypted. (${countLabel($("output").value)})`);
+  }
+
+  const password = $("password").value;
+  if (!password) return setStatus("Please enter a password.", true);
+  try {
+    if (direction === "encrypt") {
+      $("output").value = await aesEncrypt(text, password);
+      setStatus("Encrypted. Use the same password to decrypt.");
+    } else {
+      $("output").value = await aesDecrypt(text, password);
+      setStatus(`Decrypted. (${countLabel($("output").value)})`);
+    }
+  } catch {
+    $("output").value = "";
+    setStatus("Decryption failed. The password or encrypted text is incorrect.", true);
+  }
+}
+
+$("encrypt").addEventListener("click", () => run("encrypt"));
+$("decrypt").addEventListener("click", () => run("decrypt"));
+
+$("copy").addEventListener("click", async () => {
+  if (!$("output").value) return;
+  try {
+    await navigator.clipboard.writeText($("output").value);
+    setStatus("Copied.");
+  } catch {
+    $("output").select();
+    setStatus("Couldn't copy automatically. The result is selected — please copy it manually.", true);
+  }
+});
+
+$("swap").addEventListener("click", () => {
+  $("input").value = $("output").value;
+  $("output").value = "";
+  setStatus("");
+});
+</script>
+</body>
+</html>
