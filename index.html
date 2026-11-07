@@ -251,7 +251,7 @@ async function run(direction) {
   if ($("mode").value === "caesar") {
     const shift = parseInt($("shift").value, 10) || 0;
     $("output").value = caesar(text, direction === "encrypt" ? shift : -shift);
-    return setStatus(direction === "encrypt" ? "暗号化しました。" : `復号しました。（${countLabel($("output").value)}）`);
+    return setStatus(direction === "encrypt" ? `暗号化しました。（${countLabel($("output").value)}）` : `復号しました。（${countLabel($("output").value)}）`);
   }
 
   const password = $("password").value;
@@ -259,7 +259,7 @@ async function run(direction) {
   try {
     if (direction === "encrypt") {
       $("output").value = await aesEncrypt(text, password);
-      setStatus("暗号化しました。同じパスワードで復号できます。");
+      setStatus(`暗号化しました。（${countLabel($("output").value)}）同じパスワードで復号できます。`);
     } else {
       $("output").value = await aesDecrypt(text, password);
       setStatus(`復号しました。（${countLabel($("output").value)}）`);

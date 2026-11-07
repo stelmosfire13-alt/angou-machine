@@ -251,7 +251,7 @@ async function run(direction) {
   if ($("mode").value === "caesar") {
     const shift = parseInt($("shift").value, 10) || 0;
     $("output").value = caesar(text, direction === "encrypt" ? shift : -shift);
-    return setStatus(direction === "encrypt" ? "Encrypted." : `Decrypted. (${countLabel($("output").value)})`);
+    return setStatus(direction === "encrypt" ? `Encrypted. (${countLabel($("output").value)})` : `Decrypted. (${countLabel($("output").value)})`);
   }
 
   const password = $("password").value;
@@ -259,7 +259,7 @@ async function run(direction) {
   try {
     if (direction === "encrypt") {
       $("output").value = await aesEncrypt(text, password);
-      setStatus("Encrypted. Use the same password to decrypt.");
+      setStatus(`Encrypted. (${countLabel($("output").value)}) Use the same password to decrypt.`);
     } else {
       $("output").value = await aesDecrypt(text, password);
       setStatus(`Decrypted. (${countLabel($("output").value)})`);
