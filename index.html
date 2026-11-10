@@ -89,6 +89,7 @@
     <select id="mode">
       <option value="aes">AES-256（パスワード方式・安全）</option>
       <option value="caesar" selected>シーザー暗号（文字をずらす・お遊び用）</option>
+      <option value="reverse">逆さ文（文章を逆に並べる・お遊び用）</option>
     </select>
 
     <div id="aes-opts" class="hidden">
@@ -100,6 +101,10 @@
       <label for="shift">ずらす数</label>
       <input id="shift" type="number" value="3">
       <p class="hint">英字・数字・ひらがな・カタカナをずらします。復号は同じ数で戻します。</p>
+    </div>
+
+    <div id="reverse-opts" class="hidden">
+      <p class="hint">文章を後ろから並べ直します（例：あいうえお → おえういあ）。復号ももう一度逆にするだけです。</p>
     </div>
 
     <label for="input">入力</label>
@@ -209,11 +214,19 @@ function caesar(text, shift) {
   }).join("");
 }
 
+// ---- 逆さ文 ----
+// 絵文字や濁点付きの文字が崩れないよう、見た目の1文字単位で逆にする
+function reverseText(text) {
+  const seg = new Intl.Segmenter("ja", { granularity: "grapheme" });
+  return Array.from(seg.segment(text), (x) => x.segment).reverse().join("");
+}
+
 // ---- UI ----
 $("mode").addEventListener("change", () => {
-  const isAes = $("mode").value === "aes";
-  $("aes-opts").classList.toggle("hidden", !isAes);
-  $("caesar-opts").classList.toggle("hidden", isAes);
+  const mode = $("mode").value;
+  $("aes-opts").classList.toggle("hidden", mode !== "aes");
+  $("caesar-opts").classList.toggle("hidden", mode !== "caesar");
+  $("reverse-opts").classList.toggle("hidden", mode !== "reverse");
   setStatus("");
 });
 
@@ -244,9 +257,17 @@ function countLabel(text) {
   return `${X_LIMIT / 2}文字中${n}文字${n > X_LIMIT / 2 ? "・上限オーバー" : ""}`;
 }
 
+const ENC_MSG = () => `暗号化しました。（${countLabel($("output").value)}）`;
+const DEC_MSG = () => `復号しました。（${countLabel($("output").value)}）`;
+
 async function run(direction) {
   const text = $("input").value;
   if (!text) return setStatus("文章を入力してください。", true);
+
+  if ($("mode").value === "reverse") {
+    $("output").value = reverseText(text);
+    return setStatus(direction === "encrypt" ? ENC_MSG() : DEC_MSG());
+  }
 
   if ($("mode").value === "caesar") {
     const shift = parseInt($("shift").value, 10) || 0;
